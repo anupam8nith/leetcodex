@@ -1,63 +1,81 @@
+"""
+leetcodex.sandbox — thin wrapper around Docker / subprocess
+"""
+from __future__ import annotations
+
 import os
 import platform
 import shutil
 import subprocess
+import sys
+from typing import List, Optional
 
-def is_docker_available():
-    """Check if Docker is installed and in PATH."""
+# helpers  
+
+def _stream(cmd: List[str]) -> subprocess.CompletedProcess:
+    """
+    Run *cmd* streaming stdout/stderr live to the parent console.
+    Returns CompletedProcess at the end.
+    """
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, bufsize=1, universal_newlines=True) as p:
+        for line in p.stdout:          # real‑time echo
+            print(line, end="")
+        p.wait()
+        stdout, _ = p.communicate()
+        return subprocess.CompletedProcess(cmd, p.returncode, stdout or "", "")
+
+
+# public API
+
+def is_docker_available() -> bool:
     return shutil.which("docker") is not None
 
-def run_subprocess(cmd_list, input_data=None, timeout=None, memory_limit=None):
+
+def pull_image(image: str) -> None:
+    """Pull *image* if not present, streaming progress live."""
+    print(f"[leetcodex] pulling docker image {image} …")
+    _stream(["docker", "pull", image]) 
+    print("[leetcodex] image ready\n")
+
+
+def run_subprocess(cmd: List[str], *, input_data=None,
+                   timeout: Optional[int] = None,
+                   memory_limit: Optional[int] = None) -> subprocess.CompletedProcess:
     """
-    Run a command in a local subprocess with optional time/memory limits.
-    Returns CompletedProcess with captured output.
+    Run *cmd* locally with optional time/memory limits (timeout applies).
     """
-    # Set resource limits on Unix (Linux/Mac) if memory or CPU time specified
-    preexec_fn = None
+    preexec = None
     if (timeout or memory_limit) and platform.system() != "Windows":
         import resource
-        def _limit_resources():
-            # CPU time limit (seconds)
+        def _limits() -> None:
             if timeout:
                 resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout))
-            # Memory limit (address space, bytes)
             if memory_limit:
-                mem_bytes = memory_limit * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        preexec_fn = _limit_resources
-    try:
-        result = subprocess.run(
-            cmd_list, input=input_data if input_data is not None else None,
-            capture_output=True, text=True, timeout=timeout, preexec_fn=preexec_fn
-        )
-    except subprocess.TimeoutExpired as e:
-        # Return a CompletedProcess-like object on timeout
-        return subprocess.CompletedProcess(cmd_list, -1, stdout="", stderr=f"Timed out after {timeout}s")
-    return result
+                mem = memory_limit * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+        preexec = _limits
 
-def run_in_docker(image, workdir, cmd_list, input_data=None, timeout=None, memory_limit=None):
-    """
-    Run a command inside a Docker container with resource limits.
-    Returns CompletedProcess with captured output.
-    """
-    # Base docker run command
-    docker_cmd = ["docker", "run", "--rm", "--network", "none"]
-    # Apply memory limit if specified (in MB)
-    if memory_limit:
-        docker_cmd += ["--memory", f"{memory_limit}m", "--memory-swap", f"{memory_limit}m"]
-    # Apply CPU time limit (ulimit for CPU seconds inside container)
-    if timeout:
-        docker_cmd += ["--ulimit", f"cpu={timeout}"]
-    # Mount the working directory as /code in the container (read-only if no compile needed)
-    docker_cmd += ["-v", f"{workdir}:/code", "-w", "/code"]
-    docker_cmd.append(image)
-    docker_cmd += cmd_list
     try:
-        result = subprocess.run(
-            docker_cmd, input=(input_data if input_data is not None else None),
-            capture_output=True, text=True, timeout=timeout
-        )
+        return subprocess.run(cmd, input=input_data, text=True,
+                              capture_output=True, timeout=timeout,
+                              preexec_fn=preexec)
     except subprocess.TimeoutExpired:
-        # If a timeout occurs, kill the container (not implemented for brevity)
-        return subprocess.CompletedProcess(docker_cmd, -1, stdout="", stderr=f"Timed out after {timeout}s")
-    return result
+        return subprocess.CompletedProcess(cmd, -1, "", f"Timed out after {timeout}s")
+
+
+def run_in_docker(image: str, workdir: str, cmd: List[str], *,
+                  input_data=None, timeout: Optional[int] = None,
+                  memory_limit: Optional[int] = None) -> subprocess.CompletedProcess:
+    """
+    Run *cmd* inside *image* with resource limits.
+    Timeout applies only to the *container command*, NOT to `docker pull`.
+    """
+    base = ["docker", "run", "--rm", "--network", "none",
+            "-v", f"{workdir}:/code", "-w", "/code"]
+    if memory_limit:
+        base += ["--memory", f"{memory_limit}m", "--memory-swap", f"{memory_limit}m"]
+    if timeout:
+        base += ["--ulimit", f"cpu={timeout}"]
+    full_cmd = base + [image] + cmd
+    return run_subprocess(full_cmd, input_data=input_data, timeout=timeout)

@@ -12,9 +12,9 @@ cpp:
             "{file}", "-o", "{file_base}.out"]
   run: ["{file_base}.out"]
   docker_image: "gcc:latest"
-  docker_compile: ["g++", "-O2", "-std=c++17", "/code/{file_name}", "-o", "/tmp/a.out"]
-  docker_run: ["/tmp/a.out"]
-
+  docker_compile: ["g++", "-O2", "-std=c++17",
+                   "/code/{file_name}", "-o", "/code/a.out"]
+  docker_run: ["/code/a.out"]
 java:
   extensions: [".java"]
   compile: ["javac", "{file}"]
