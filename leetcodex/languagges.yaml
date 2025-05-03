@@ -1,0 +1,47 @@
+python:
+  extensions: [".py"]
+  compile: []         # No compilation needed for Python
+  run: ["python", "{file}"]
+  docker_image: "python:3.11-alpine"
+  docker_compile: []  # No compilation in Docker for Python
+  docker_run: ["python3", "/code/{file_name}"]
+
+cpp:
+  extensions: [".cpp", ".cc", ".cxx"]
+  compile: ["g++", "-O2", "-std=c++17", "{file}", "-o", "{file_base}.out"]
+  run: ["{file_base}.out"]
+  docker_image: "gcc:latest"
+  docker_compile: ["g++", "-O2", "-std=c++17", "/code/{file_name}", "-o", "/tmp/a.out"]
+  docker_run: ["/tmp/a.out"]
+
+java:
+  extensions: [".java"]
+  compile: ["javac", "{file}"]
+  run: ["java", "{class_name}"]
+  docker_image: "openjdk:latest"
+  docker_compile: ["javac", "/code/{file_name}"]
+  docker_run: ["java", "-cp", "/code", "{class_name}"]
+
+javascript:
+  extensions: [".js"]
+  compile: []        # No compilation for JavaScript
+  run: ["node", "{file}"]
+  docker_image: "node:18-alpine"
+  docker_compile: []
+  docker_run: ["node", "/code/{file_name}"]
+
+go:
+  extensions: [".go"]
+  compile: []        # Can compile, but use go run for simplicity
+  run: ["go", "run", "{file}"]
+  docker_image: "golang:alpine"
+  docker_compile: []
+  docker_run: ["go", "run", "/code/{file_name}"]
+
+rust:
+  extensions: [".rs"]
+  compile: ["rustc", "{file}", "-o", "{file_base}"]
+  run: ["{file_base}"]
+  docker_image: "rust:latest"
+  docker_compile: ["rustc", "/code/{file_name}", "-o", "/tmp/program"]
+  docker_run: ["/tmp/program"]
