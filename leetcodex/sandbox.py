@@ -27,7 +27,7 @@ def run_subprocess(cmd_list, input_data=None, timeout=None, memory_limit=None):
         preexec_fn = _limit_resources
     try:
         result = subprocess.run(
-            cmd_list, input=(input_data.encode() if input_data is not None else None),
+            cmd_list, input=input_data if input_data is not None else None,
             capture_output=True, text=True, timeout=timeout, preexec_fn=preexec_fn
         )
     except subprocess.TimeoutExpired as e:

@@ -1,0 +1,4 @@
+/tests/testing_code
+.leetcodex/
+leetcodex.egg-info/
+leetcodex/__pycache__/

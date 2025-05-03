@@ -1,0 +1,6 @@
+# Core runtime dependencies for leetcodex
+click>=8.1,<9            # clean CLI interface
+PyYAML>=6.0,<7           # parse languages.yaml & config files
+requests>=2.25,<3        # GraphQL + HTTP fetching
+beautifulsoup4>=4.9,<5   # parse HTML to extract sample I/O blocks
+colorama>=0.4,<1          # enable ANSI colours on Windows terminals

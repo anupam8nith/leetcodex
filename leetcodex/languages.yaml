@@ -8,7 +8,8 @@ python:
 
 cpp:
   extensions: [".cpp", ".cc", ".cxx"]
-  compile: ["g++", "-O2", "-std=c++17", "{file}", "-o", "{file_base}.out"]
+  compile: ["g++", "-O2", "-std=c++17","-include", "bits/stdc++.h",
+            "{file}", "-o", "{file_base}.out"]
   run: ["{file_base}.out"]
   docker_image: "gcc:latest"
   docker_compile: ["g++", "-O2", "-std=c++17", "/code/{file_name}", "-o", "/tmp/a.out"]

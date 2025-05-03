@@ -3,27 +3,29 @@ name = "leetcodex"
 version = "0.1.0"
 description = "CLI tool to run LeetCode problem solutions locally"
 authors = [
-  { name = "Anupam Kumar", email = "anupamkumar@gmail.com" }
+  { name = "Anupam Kumar", email = "anupamkumar.nith@gmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.7"
 license = "MIT"
+
 keywords = ["LeetCode", "CLI", "sandbox", "competitive programming"]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent"
 ]
+
 dependencies = [
-  "click>=8.0",
-  "PyYAML>=6.0",
-  "requests>=2.25",
-  "beautifulsoup4>=4.9"
+  "click>=8.1,<9",
+  "PyYAML>=6.0,<7",
+  "requests>=2.31,<3",
+  "beautifulsoup4>=4.12,<5",
+  "colorama>=0.4,<1"
 ]
 
 [project.scripts]
-leet = "leetcodex.cli:cli"  # Exposes the `leet` command line tool:contentReference[oaicite:6]{index=6}
+leet = "leetcodex.cli:cli"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
