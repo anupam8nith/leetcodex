@@ -8,51 +8,51 @@
 pip install leetcodex
  -->
 
-# Leetcodex — Comprehensive User Guide
+# Leetcodex: Comprehensive User Guide
 
-> **Version** 0.1.0   |   **Last updated:** May 2025   |   © 2025 Anupam Kumar  
-> Licensed under the MIT License
+> **Version** 0.1.0 | **Last updated:** May 2025 | © 2025 Anupam Kumar  
+> Licensed under the MIT License
 
 ---
 
-## 1  Introduction
+## 1 Introduction
 
 **Leetcodex** is a cross‑platform command‑line helper that lets you run
 LeetCode® problems **locally** against the official example tests *and* any
 custom cases you supply, in six languages:
 
-| Language          | Extensions            | Runtime / Compiler    |
+| Language          | Extensions            | Runtime / Compiler    |
 | ----------------- | --------------------- | --------------------- |
-| Python            | `.py`                 | CPython ≥ 3.7         |
-| C++               | `.cpp`, `.cc`, `.cxx` | GCC ≥ 9 or Clang ≥ 11 |
-| Java              | `.java`               | OpenJDK ≥ 17          |
-| JavaScript (Node) | `.js`                 | Node ≥ 14             |
-| Go                | `.go`                 | Go ≥ 1.18             |
-| Rust              | `.rs`                 | Rust ≥ 1.70           |
+| Python            | `.py`                 | CPython ≥ 3.7         |
+| C++               | `.cpp`, `.cc`, `.cxx` | GCC ≥ 9 or Clang ≥ 11 |
+| Java              | `.java`               | OpenJDK ≥ 17          |
+| JavaScript (Node) | `.js`                 | Node ≥ 14             |
+| Go                | `.go`                 | Go ≥ 1.18             |
+| Rust              | `.rs`                 | Rust ≥ 1.70           |
 
 The tool prefers **native execution** when a compiler is on your `PATH`.
-Otherwise it transparently falls back to a **Docker® sandbox**.
+Otherwise it transparently falls back to a **Docker® sandbox**.
 
 ---
 
-## 2  Installation
+## 2 Installation
 
-### 2.1 Prerequisites
+### 2.1 Prerequisites
 
 | Requirement          | Recommended Version | Notes                                   |
 | -------------------- | ------------------- | --------------------------------------- |
-| Python               | 3.8 – 3.12          | Needed only for the CLI itself          |
+| Python               | 3.8 – 3.12          | Needed only for the CLI itself          |
 | pip / pipx           | latest              | `pipx install leetcodex` isolates deps  |
-| Docker (optional)    | 24.x+               | Required for sandbox fallback           |
+| Docker (optional)    | 24.x+               | Required for sandbox fallback           |
 | Compilers / Runtimes | see table above     | Only if you prefer native execution     |
 
-### 2.2 Install from PyPI (stable)
+### 2.2 Install from PyPI (stable)
 
 ```bash
 pip install leetcodex          # or: pipx install leetcodex
 ````
 
-\### 2.3 Install from Source (development)
+### 2.3 Install from Source (development)
 
 ```bash
 git clone https://github.com/YOUR‑ORG/leetcodex.git
@@ -62,16 +62,16 @@ pip install -e .[dev]          # editable + dev deps
 
 ---
 
-\## 3  Quick Start
+## 3 Quick Start
 
 ```bash
-# 1   Fetch sample tests
+# 1 Fetch sample tests
 leet fetch two-sum
 
-# 2   Write your solution
-vim two_sum.py          # or .cpp / .java / …
+# 2 Write your solution
+vim two_sum.py    # or .cpp / .java / …
 
-# 3   Run locally
+# 3 Run locally
 leet test two_sum.py
 ```
 
@@ -79,7 +79,7 @@ Example output:
 
 ```
 Fetched 1 sample test case(s) for "Two Sum" (slug: two-sum).
-Test case 1: PASSED ✅
+Test case 1: PASSED ✅
 ----------
 ```
 
@@ -87,7 +87,7 @@ Test case 1: PASSED ✅
 
 ---
 
-\## 4  Command Reference
+## 4 Command Reference
 
 | Command              | Purpose                                                                 |                                                           |
 | -------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -95,22 +95,22 @@ Test case 1: PASSED ✅
 | `leet test  <file>`  | Compile/interpret the file, run all tests, show coloured diff & verdict |                                                           |
 | `leet run   <file>`  | Run once, stream stdin / stdout / stderr (no verdict)                   |                                                           |
 
-\### 4.1 Common Options
+### 4.1 Common Options
 
 | Flag / Option            | Default | Meaning                                    |
 | ------------------------ | ------- | ------------------------------------------ |
 | `--docker / --no-docker` | auto    | Force (or forbid) container execution      |
 | `--timeout  <sec>`       | 2       | CPU‑time limit per test case               |
 | `--memory   <MB>`        | 256     | Memory limit per test case                 |
-| `-i / --input` (str)     | —       | Custom stdin (repeatable)                  |
-| `-o / --output` (str)    | —       | Expected stdout for each `-i` (repeatable) |
+| `-i / --input` (str)     | —       | Custom stdin (repeatable)                  |
+| `-o / --output` (str)    | —       | Expected stdout for each `-i` (repeatable) |
 | `-p / --problem <slug>`  | —       | Explicit slug when filename is ambiguous   |
 
 ---
 
-\## 5  Language‑Specific Examples
+## 5 Language‑Specific Examples
 
-\### 5.1 Python
+### 5.1 Python
 
 ```python
 class Solution:
@@ -129,9 +129,9 @@ Run:
 leet test product_except_self.py --problem product-of-array-except-self
 ```
 
-\### 5.2 C++ — two workflows
+### 5.2 C++ — two workflows
 
-\#### A. Macro (no `main()`)
+#### A. Macro (no `main()`)
 
 ```cpp
 #include <bits/stdc++.h>
@@ -148,7 +148,7 @@ public:
 };
 ```
 
-\#### B. Own `main()`
+#### B. Own `main()`
 
 ```cpp
 #include <bits/stdc++.h>
@@ -158,14 +158,14 @@ int main(){
     int n; cin >> n;
     string json; getline(cin,json); getline(cin,json);
     /* parse… */
-    cout << Solution().countCoveredBuildings(n, parsed) << '\n';
+    cout << Solution().countCoveredBuildings(n, parsed) << 'n';
 }
 ```
 *main() or #def LEE_METHOD is required for evaluation whether test cases passed.*
 
 ---
 
-\## 6  Whitespace‑Insensitive Comparison
+## 6 Whitespace‑Insensitive Comparison
 
 Leetcodex normalises answers with:
 
@@ -174,23 +174,23 @@ import ast, re
 def norm(s):
     try:  return ast.literal_eval(s.strip())
     except Exception:
-        return re.sub(r"\s+", "", s.strip())
+        return re.sub(r"s+", "", s.strip())
 ```
 
-Thus `[1,2]` ≡ `[1, 2]`, `{ "a":1 }` ≡ `{"a":1}`, and `YES NO` ≡ `YES  NO`.
+Thus `[1,2]` ≡ `[1, 2]`, `{ "a":1 }` ≡ `{"a":1}`, and `YES NO` ≡ `YES NO`.
 
 ---
 
-\## 7  Sandbox & Resource Limits
+## 7 Sandbox & Resource Limits
 
 * **Local mode**: subprocess + RLIMITS (Linux/macOS).
 * **Docker mode**: read‑only bind mount, `--network=none`, memory/CPU caps,
-  `no-new-privileges`, `pids‑limit 64`.
+  `no-new-privileges`, `pids‑limit 64`.
 * The compilation phase has **no timeout**; limits apply only to execution.
 
 ---
 
-\## 8  Configuration (`~/.config/leetcodex/config.yml`)
+## 8 Configuration (`~/.config/leetcodex/config.yml`)
 
 ```yaml
 sandbox: auto        # auto | docker | local
@@ -201,7 +201,7 @@ judge0_url: ""       # optional fallback
 
 ---
 
-\## 9  CI Integration (GitHub Actions)
+## 9 CI Integration (GitHub Actions)
 
 ```yaml
 jobs:
@@ -217,23 +217,33 @@ jobs:
 
 ---
 
-\## 10  Contributing
+## 10 Contributing
 
 1. Fork → feature branch.
 2. `ruff --fix` & `black .`
 3. Add/adjust tests under `tests/`.
 4. PR with a clear description.
 
-Adding a language? Update `leetcodex/languages.yaml`, add example + test, and
+Adding a language? Update `leetcodex/languages.yaml`, add example + test, and
 extend this README table.
 
 ---
 
-\## 11  License
+## 11 License
 
-MIT License — see `LICENSE`.
+MIT License — see `LICENSE`.
 
-LeetCode® is a trademark of LeetCode Inc.; this project is not affiliated.
+LeetCode® is a trademark of LeetCode Inc.; this project is not affiliated.
+
+---
+
+## 12  FAQ
+
+**Q 1. Does Leetcodex retrieve hidden tests?** No. Hidden tests are proprietary to LeetCode and remain on their servers.
+
+**Q 2. Can I submit my solution to LeetCode from Leetcodex?** Not yet. A future `leet submit` command is planned once a stable API workflow is agreed.
+
+**Q 3. Why do I get a Docker error on Windows?** Ensure Docker Desktop is running and the WSL kernel is up‑to‑date. Use `--no-docker` to force native execution if you have compilers installed.
 
 ---
 
