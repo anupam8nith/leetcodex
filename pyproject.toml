@@ -24,7 +24,9 @@ dependencies = [
 ]
 
 [project.scripts]
+leetcodex = "leetcodex.cli:cli"
 leet = "leetcodex.cli:cli"
+testlc = "leetcodex.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

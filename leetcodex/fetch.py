@@ -78,7 +78,7 @@ def fetch_problem(title_slug: str) -> Tuple[str, str, List[Tuple[str, str | None
 
     # 2 Fallback — sampleTestCase field (inputs only)
     if not examples and q.get("sampleTestCase"):
-        # sampleTestCase is a newline‑joined block; split on blank lines
+        # sampleTestCase is a newline-joined block; split on blank lines
         raw_cases = [c.strip() for c in q["sampleTestCase"].strip().split("\n\n") if c.strip()]
         # expected output unknown -> None
         examples = [(c, None) for c in raw_cases]

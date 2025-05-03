@@ -1,97 +1,95 @@
 """
-leetcodex.runner  —  execute LeetCode solutions locally
-
-Features:
-  • Injects LeetCode helper stubs (List, TreeNode, …) at import-time
-  • Prepends stubs into a Python wrapper so subprocess runs see them
-  • Auto-imports installed-but-forgotten modules once
-  • Clearly reports truly missing packages
-  • Falls back to Docker sandbox when needed
+leetcodex.runner — execute LeetCode solutions locally
 """
 from __future__ import annotations
 
+import ast
 import difflib
 import importlib.util
-import os
+import io
 import shutil
 import sys
 import tempfile
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
 from typing import List, Tuple
 
 import yaml
+
 from . import sandbox, stubs
 
-# Helpers
 
-def _ensure_stub_package_in_sys_modules() -> None:
-    """
-    Create real in-memory modules for:
-      • 'leetcodex'           (a namespace package)
-      • 'leetcodex.stubs'     (the stubs module)
-    so that any 'import leetcodex.stubs' in user code never falls back to
-    the user_solution loader.  (PEP 451 ModuleSpec with loader=None) :contentReference[oaicite:4]{index=4}
-    """
-    # 1) create/claim the leetcodex package
+#  internal helpers
+
+def _ensure_stub_package() -> None:
+    """Guarantee that `import leetcodex.stubs` always succeeds."""
     if "leetcodex" not in sys.modules:
         pkg = ModuleType("leetcodex")
-        pkg.__path__ = []  # mark as namespace package
-        # give it a proper spec so import machinery treats it as a package
-        pkg.__spec__ = ModuleSpec(name="leetcodex", loader=None, is_package=True)
+        pkg.__path__ = []          # mark as namespace package
         sys.modules["leetcodex"] = pkg
-
-    # 2) bind the real stubs module under that package
-    stubs_mod = stubs
-    sys.modules["leetcodex.stubs"] = stubs_mod
-    # also fix its spec so importlib won’t attempt to reload it
-    stubs_mod.__spec__ = ModuleSpec(
-        name="leetcodex.stubs",
-        loader=None,
-        origin=str(Path(__file__).with_name("stubs.py")),
-        is_package=False
-    )
+    sys.modules["leetcodex.stubs"] = stubs
 
 
-def _make_python_wrapper(src: Path) -> Path:
+def _make_wrapper(src: Path) -> Path:
     """
-    Create a temp file that **inlines** the stubs (no external import) and then
-    appends the user’s original source verbatim.  This removes the ImportError
-    in child interpreters.
+    Create a temp file that:
+      • inlines the stubs
+      • appends the user source
+      • adds a tiny driver that calls the first public method of class Solution
+        and prints its return value (so blank LeetCode files produce output)
     """
-    wrapper_dir = Path(tempfile.mkdtemp(prefix="lcx_pywrap_"))
-    wrapper_path = wrapper_dir / src.name
-    stubs_path  = Path(__file__).with_name("stubs.py")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="lcx_pywrap_"))
+    wrapper = tmp_dir / src.name
+    stubs_file = Path(__file__).with_name("stubs.py")
 
-    with wrapper_path.open("w", encoding="utf-8") as fout, \
-         stubs_path.open("r", encoding="utf-8") as fstub, \
+    with wrapper.open("w", encoding="utf-8") as fout, \
+         stubs_file.open("r", encoding="utf-8") as fstub, \
          src.open("r", encoding="utf-8") as fin:
-        # ① inline the stub definitions
-        fout.write("# === Leetcodex inlined stubs ===\n")
+
+        fout.write("# === Inlined Leetcodex stubs ===\n")
         fout.write(fstub.read())
-        fout.write("\n# === user solution below ===\n")
+        fout.write("\n# === User solution ===\n")
         shutil.copyfileobj(fin, fout)
 
-    return wrapper_path
+        driver = r"""
+        if __name__ == "__main__":
+            import sys, ast
+            raw = sys.stdin.read().strip()
+            if not raw:
+                sys.exit(0)
+            # handle either `var = value` or raw literal
+            rhs = raw.split("=", 1)[-1] if "=" in raw and not raw.lstrip().startswith(("{", "[")) else raw
+            try:
+                arg = ast.literal_eval(rhs.strip())
+            except Exception:
+                arg = rhs.strip()
+            sol = Solution()
+            public = next((m for m in dir(sol) if not m.startswith("_")), None)
+            res = getattr(sol, public)(arg) if public else ""
+            print(res)
+        """
+        fout.write(driver.strip() + "\n")
+
+    return wrapper
 
 
-def _diff(expected: str, actual: str) -> List[str]:
+def _diff(exp: str, act: str) -> List[str]:
+    """Return unified‑diff lines."""
     return list(
         difflib.unified_diff(
-            expected.splitlines(),
-            actual.splitlines(),
-            fromfile="expected",
-            tofile="actual",
-            lineterm="",
+            exp.splitlines(), act.splitlines(),
+            fromfile="expected", tofile="actual", lineterm=""
         )
     )
 
 
-# Public API
+# export for cli
+diff_outputs = _diff
 
+
+# public API
 def run_tests(
-    file_path: str | os.PathLike,
+    file_path: str | Path,
     test_cases: List[Tuple[str, str | None]],
     *,
     use_docker: bool | None = None,
@@ -99,92 +97,77 @@ def run_tests(
     memory: int = 256,
 ):
     """
-    Execute <file_path> against each (input, expected) pair.
-    Returns (compile_error: str | None, results: List[dict]).
+    Execute *file_path* for every (input, expected) pair.
+    Returns (compile_error: str | None, results: list[dict])
     """
     file_path = Path(file_path).resolve()
 
-    # 1) load language config
-    cfg = yaml.safe_load((Path(__file__).with_name("languages.yaml")).read_text())
+    # 1. detect language from languages.yaml
+    lang_cfgs = yaml.safe_load(Path(__file__).with_name("languages.yaml").read_text())
     ext = file_path.suffix.lower()
-    lang, lang_cfg = next(
-        ((n, c) for n, c in cfg.items() if ext in (e.lower() for e in c["extensions"])),
-        (None, None),
-    )
-    if lang_cfg is None:
+    lang, cfg = next(((n, c) for n, c in lang_cfgs.items()
+                      if ext in (e.lower() for e in c["extensions"])), (None, None))
+    if cfg is None:
         raise RuntimeError(f"Unsupported extension '{ext}'")
 
-    needs_compile = bool(lang_cfg.get("compile"))
-
-    # decide Docker vs local if user didn’t force
+    # 2. choose Docker if needed/available
+    needs_compile = bool(cfg.get("compile"))
     if use_docker is None:
-        # check for local compiler
-        has_compiler = False
-        if needs_compile:
-            has_compiler = importlib.util.find_spec(lang_cfg["compile"][0]) is not None
-        # fallback to Docker only if compile needed and no compiler found
+        has_compiler = importlib.util.find_spec(cfg["compile"][0]) is not None if needs_compile else False
         use_docker = needs_compile and not has_compiler and sandbox.is_docker_available()
 
-        # 2) Python: build wrapper & ensure stub package
-        run_path = file_path
-        if lang == "python":
-            _ensure_stub_package_in_sys_modules()
-            run_path = _make_python_wrapper(file_path)
-            needs_compile = False  # interpreted
+    # 3. for Python: build wrapper, skip compilation
+    run_path = file_path
+    if lang == "python":
+        _ensure_stub_package()
+        run_path = _make_wrapper(file_path)
+        needs_compile = False
 
-    # 3) compile step (C++, Java, Rust, etc.)
-    image = lang_cfg.get("docker_image")
+    image = cfg.get("docker_image")
+
+    # 4. compile (if required)
     if needs_compile:
-        tpl = lang_cfg["docker_compile"] if use_docker and image else lang_cfg["compile"]
-        cmd = [a.format(file=str(run_path), file_base=str(run_path.with_suffix(""))) for a in tpl]
-        proc = (
-            sandbox.run_in_docker(image, str(run_path.parent), cmd, timeout=10, memory_limit=memory)
-            if use_docker and image
-            else sandbox.run_subprocess(cmd, timeout=10)
-        )
+        tpl = cfg["docker_compile"] if use_docker and image else cfg["compile"]
+        compile_cmd = [a.format(file=str(run_path),
+                                file_base=str(run_path.with_suffix("")),
+                                file_name=run_path.name,
+                                class_name="") for a in tpl]
+        proc = (sandbox.run_in_docker(image, str(run_path.parent), compile_cmd,
+                                      timeout=timeout, memory_limit=memory)
+                if use_docker and image else
+                sandbox.run_subprocess(compile_cmd, timeout=timeout))
         if proc.returncode:
             return (proc.stderr or "") + (proc.stdout or ""), []
 
-    # 4) run each test via Docker or local subprocess
-    run_tpl = lang_cfg["docker_run"] if use_docker and image else lang_cfg["run"]
+    # 5. run each test case
+    run_tpl = cfg["docker_run"] if use_docker and image else cfg["run"]
     results = []
-    for inp, expected in test_cases:
-        cmd = [a.format(file=str(run_path), file_base=str(run_path.with_suffix(""))) for a in run_tpl]
-        proc = (
-            sandbox.run_in_docker(
-                image,
-                str(run_path.parent),
-                cmd,
-                input_data=(inp + "\n") if inp is not None else None,
-                timeout=timeout,
-                memory_limit=memory,
-            )
-            if use_docker and image
-            else sandbox.run_subprocess(
-                cmd,
-                input_data=(inp + "\n") if inp is not None else None,
-                timeout=timeout,
-                memory_limit=memory,
-            )
-        )
+    for raw_inp, expected in test_cases:
+        cmd = [a.format(file=str(run_path),
+                        file_base=str(run_path.with_suffix("")),
+                        file_name=run_path.name,
+                        class_name="") for a in run_tpl]
 
-        out = (proc.stdout or "").rstrip("\n")
-        err = (proc.stderr or "").strip()
+        proc = (sandbox.run_in_docker(image, str(run_path.parent), cmd,
+                                      input_data=(raw_inp + "\n") if raw_inp else None,
+                                      timeout=timeout, memory_limit=memory)
+                if use_docker and image else
+                sandbox.run_subprocess(cmd,
+                                       input_data=(raw_inp + "\n") if raw_inp else None,
+                                       timeout=timeout, memory_limit=memory))
+
+        full_stdout = (proc.stdout or "").rstrip("\n")
+        stderr      = (proc.stderr or "").strip()
+        answer_line = full_stdout.splitlines()[-1].strip() if full_stdout else ""
 
         if expected is None:
-            results.append(dict(input=inp, expected=None, output=out, error=err or None, passed=True))
+            results.append(dict(input=raw_inp, expected=None,
+                                output=full_stdout, answer=answer_line,
+                                error=stderr or None, passed=True))
         else:
-            passed = proc.returncode == 0 and out.strip() == expected.strip()
-            results.append(
-                dict(
-                    input=inp,
-                    expected=expected,
-                    output=out,
-                    error=err or None,
-                    passed=passed,
-                    diff=_diff(expected, out) if not passed else [],
-                )
-            )
+            passed = (proc.returncode == 0) and (answer_line == expected.strip())
+            results.append(dict(input=raw_inp, expected=expected,
+                                output=full_stdout, answer=answer_line,
+                                error=stderr or None, passed=passed))
 
     return None, results
-diff_outputs = _diff
