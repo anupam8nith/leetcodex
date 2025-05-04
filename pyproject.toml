@@ -25,12 +25,12 @@ classifiers = [
 ]
 
 dependencies = [
-  "click>=8.1",
-  "PyYAML>=6.0",
-  "requests>=2.31",
+  "click>=8.1",          
+  "PyYAML>=6.0",         
+  "requests>=2.31",      
   "beautifulsoup4>=4.12",
-  "colorama>=0.4",
-  "html2text"
+  "colorama>=0.4",       
+  "html2text>=2025.4.15"    
 ]
 
 [project.scripts]
