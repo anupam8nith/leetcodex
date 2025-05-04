@@ -1,120 +1,148 @@
-"""
-leetcodex.fetch
--------------------------------------------------
-Fetch LeetCode problem metadata and example tests.
-
-• fetch_problem(slug) -> (title, slug, examples)
-      * examples is a list of (input_str, output_str | None)
-      * Falls back to GraphQL's sampleTestCase when HTML lacks
-        explicit "Input: … / Output: …" blocks.
-
-• save_examples(slug, examples)
-• load_cached_examples(slug)  -> examples | None
-"""
+""" leetcodex.fetch — Fetch LeetCode problem metadata, statement & examples. """
 
 from __future__ import annotations
-
-import os
+import json
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
+import html2text
 import requests
 from bs4 import BeautifulSoup
 
 GRAPHQL_URL = "https://leetcode.com/graphql"
 
 
+@dataclass
+class _Problem:
+    title: str
+    slug: str
+    examples: List[Tuple[str, Optional[str]]]
+    markdown: str
+    code_defs: List[dict]
 
-# Public helpers
-def fetch_problem(title_slug: str) -> Tuple[str, str, List[Tuple[str, str | None]]]:
-    """Return (title, slug, examples) for a LeetCode problem."""
+    # allow unpacking into (title, slug, examples)
+    def __iter__(self):
+        yield self.title
+        yield self.slug
+        yield self.examples
+
+
+def fetch_problem(title_slug: str) -> _Problem:
+    """
+    Return a _Problem containing:
+      • title
+      • slug
+      • examples [(input_str, output_str|None), …]
+      • markdown statement
+      • code_defs list (starter-code templates)
+    """
     query = """
     query getQuestion($titleSlug: String!) {
       question(titleSlug: $titleSlug) {
         title
-        content          # HTML body
-        sampleTestCase   # fallback block
+        content
+        sampleTestCase
+        codeDefinition
       }
-    }
-    """
-    resp = requests.post(GRAPHQL_URL, json={"query": query, "variables": {"titleSlug": title_slug}})
+    }"""
+    resp = requests.post(GRAPHQL_URL,
+                         json={"query": query,
+                               "variables": {"titleSlug": title_slug}})
     resp.raise_for_status()
+    data = resp.json().get("data", {}).get("question")
+    if not data:
+        raise RuntimeError(f"Problem '{title_slug}' not found.")
 
-    data = resp.json()
-    if data.get("errors") or not data.get("data", {}).get("question"):
-        raise RuntimeError(f"Problem '{title_slug}' not found or API error.")
+    title      = data["title"]
+    html_body  = data["content"] or ""
 
-    q = data["data"]["question"]
-    title = q["title"]
-    content_html = q["content"] or ""
-
-    # 1  Primary strategy — parse explicit Input/Output in <pre> tags
-    examples: list[tuple[str, str | None]] = []
-    soup = BeautifulSoup(content_html, "html.parser")
-
+    # 1) parse sample I/O from <pre> tags
+    soup = BeautifulSoup(html_body, "html.parser")
+    examples: List[Tuple[str, Optional[str]]] = []
     for pre in soup.find_all("pre"):
-        block = pre.get_text(separator="\n")  # keep line breaks
-        if "Input:" in block and "Output:" in block:
-            try:
-                inp_idx = block.index("Input:")
-                out_idx = block.index("Output:")
-            except ValueError:
-                continue
+        txt = pre.get_text("\n")
+        if "Input:" in txt and "Output:" in txt:
+            inp = txt.split("Input:",1)[1].split("Output:",1)[0].strip().rstrip(".")
+            out = txt.split("Output:",1)[1].split("Explanation:",1)[0].strip().rstrip(".")
+            examples.append((inp, out))
 
-            input_str = block[inp_idx + len("Input:") : out_idx].strip()
-            # Stop at Explanation: if present
-            exp_idx = block.find("Explanation:")
-            output_str = (
-                block[out_idx + len("Output:") : exp_idx].strip() if exp_idx != -1 else block[out_idx + len("Output:") :].strip()
-            )
+    # 2) fallback to sampleTestCase if none found
+    if not examples and data.get("sampleTestCase"):
+        for block in data["sampleTestCase"].strip().split("\n\n"):
+            s = block.strip()
+            if s:
+                examples.append((s, None))
 
-            # Trim trailing dots so diffs are cleaner
-            if input_str.endswith("."):
-                input_str = input_str[:-1].strip()
-            if output_str.endswith("."):
-                output_str = output_str[:-1].strip()
+    # 3) full problem statement → markdown
+    markdown = html2text.html2text(html_body).strip()
 
-            examples.append((input_str, output_str))
+    # 4) parse starter-code JSON
+    code_defs = json.loads(data.get("codeDefinition") or "[]")
 
-    # 2 Fallback — sampleTestCase field (inputs only)
-    if not examples and q.get("sampleTestCase"):
-        # sampleTestCase is a newline-joined block; split on blank lines
-        raw_cases = [c.strip() for c in q["sampleTestCase"].strip().split("\n\n") if c.strip()]
-        # expected output unknown -> None
-        examples = [(c, None) for c in raw_cases]
-
-    return title, title_slug, examples
+    return _Problem(title, title_slug, examples, markdown, code_defs)
 
 
-def save_examples(slug: str, examples: List[Tuple[str, str | None]]) -> None:
-    """Persist examples under .leetcodex/<slug>/input_N.txt / output_N.txt."""
-    dir_path = Path(".leetcodex") / slug
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    for idx, (inp, out) in enumerate(examples, start=1):
-        (dir_path / f"input_{idx}.txt").write_text(inp.strip() + "\n", encoding="utf-8")
-        # Only save output file if we have an expected value
-        if out is not None:
-            (dir_path / f"output_{idx}.txt").write_text(out.strip() + "\n", encoding="utf-8")
-
-
-def load_cached_examples(slug: str) -> List[Tuple[str, str | None]] | None:
-    """Return cached examples or None if not present."""
-    dir_path = Path(".leetcodex") / slug
-    if not dir_path.is_dir():
+def load_cached_examples(slug: str) -> Optional[List[Tuple[str, Optional[str]]]]:
+    """
+    Return cached sample I/O under .leetcodex/<slug>/, or None if none exists.
+    """
+    root = Path(".leetcodex") / slug
+    if not root.is_dir():
         return None
 
-    inputs = sorted(dir_path.glob("input_*.txt"), key=lambda p: int(p.stem.split("_")[1]))
-    outputs = sorted(dir_path.glob("output_*.txt"), key=lambda p: int(p.stem.split("_")[1]))
-
-    examples: list[tuple[str, str | None]] = []
-    for inp_path in inputs:
-        idx = inp_path.stem.split("_")[1]
-        out_path = dir_path / f"output_{idx}.txt"
-        inp_txt = inp_path.read_text(encoding="utf-8").strip()
-        if out_path.exists():
-            out_txt = out_path.read_text(encoding="utf-8").strip()
-            examples.append((inp_txt, out_txt))
-        else:
-            examples.append((inp_txt, None))
+    ins  = sorted(root.glob("input_*.txt"),  key=lambda p: int(p.stem.split("_")[1]))
+    outs = sorted(root.glob("output_*.txt"), key=lambda p: int(p.stem.split("_")[1]))
+    examples: List[Tuple[str, Optional[str]]] = []
+    for inp_path in ins:
+        idx    = inp_path.stem.split("_")[1]
+        out_path = root / f"output_{idx}.txt"
+        inp_txt  = inp_path.read_text(encoding="utf-8").strip()
+        out_txt  = out_path.read_text(encoding="utf-8").strip() if out_path.exists() else None
+        examples.append((inp_txt, out_txt))
     return examples
+
+
+def save_problem_assets(
+    slug: str,
+    examples: List[Tuple[str, Optional[str]]],
+    markdown: str,
+    code_defs: List[dict],
+) -> None:
+    """
+    Write under .leetcodex/<slug>/:
+      - input_*.txt / output_*.txt
+      - problem.md
+      - <slug>.<ext> for each starter template
+    """
+    root = Path(".leetcodex") / slug
+    root.mkdir(parents=True, exist_ok=True)
+
+    # a) I/O files
+    for i, (inp, out) in enumerate(examples, start=1):
+        (root / f"input_{i}.txt").write_text(inp.rstrip() + "\n", encoding="utf-8")
+        if out is not None:
+            (root / f"output_{i}.txt").write_text(out.rstrip() + "\n", encoding="utf-8")
+
+    # b) statement
+    (root / "problem.md").write_text(markdown + "\n", encoding="utf-8")
+
+    # c) starter code templates
+    ext_map = {
+        "python":    "py",
+        "python3":   "py",
+        "cpp":       "cpp",
+        "java":      "java",
+        "javascript":"js",
+        "go":        "go",
+        "rust":      "rs",
+    }
+    for entry in code_defs:
+        lang = entry.get("value")
+        ext  = ext_map.get(lang)
+        if not ext:
+            continue
+        fname = root / f"{slug}.{ext}"
+        code  = textwrap.dedent(entry.get("defaultCode", "")) + "\n"
+        fname.write_text(code, encoding="utf-8")

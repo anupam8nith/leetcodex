@@ -1,258 +1,129 @@
 """
-leetcodex.runner — execute LeetCode solutions locally
+leetcodex.fetch
+------------------------------------------------------------------
+Utilities to download & cache LeetCode problem metadata.
+
+• fetch_problem(slug) -> dict(
+      title        = "Two Sum",
+      slug         = "two-sum",
+      html         = "<p>Given an integer array...</p>",
+      markdown     = "### Given an integer array ...",
+      examples     = [("nums = [2,7,11,15], target = 9", "[0,1]"), ...]
+  )
+
+• save_problem(data)  - stores .md + sample IO files
+• load_cached_examples(slug) -> list[(inp,out) ] | None
 """
 from __future__ import annotations
 
-import ast
-import difflib
-import importlib.util
-import re
-import shutil
-import subprocess
-import sys
-import tempfile
+import os, re, html
 from pathlib import Path
-from types import ModuleType
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
-import yaml
+import requests
+from bs4 import BeautifulSoup
+import html2text        # tiny; converts HTML → GitHub‑flavoured Markdown
 
-from . import sandbox, stubs
-
-
-# helpers #
-
-def _ensure_stub_package() -> None:
-    if "leetcodex" not in sys.modules:
-        pkg = ModuleType("leetcodex"); pkg.__path__ = []
-        sys.modules["leetcodex"] = pkg
-    sys.modules["leetcodex.stubs"] = stubs
+__all__ = ["fetch_problem", "save_problem", "load_cached_examples"]
 
 
-def _wrap_python(src: Path) -> Path:
-    tmp = Path(tempfile.mkdtemp(prefix="lcx_pywrap_")) / src.name
-    stubs_file = Path(__file__).with_name("stubs.py")
-    with tmp.open("w", encoding="utf-8") as fout, \
-         stubs_file.open("r", encoding="utf-8") as fstub, \
-         src.open("r", encoding="utf-8") as fin:
-        fout.write("# === Inlined Leetcodex stubs ===\n")
-        fout.write(fstub.read())
-        fout.write("\n# === User solution ===\n")
-        shutil.copyfileobj(fin, fout)
-
-        # improved driver: supports 1‑or‑many variables
-        fout.write(
-r"""
-if __name__ == "__main__":
-    import sys, ast, inspect
-    raw = sys.stdin.read().strip()
-    if not raw:
-        sys.exit(0)
-
-    def _split_assignments(line: str):
-        # split on ',' but keep brackets intact
-        depth = 0; cur = ""; parts=[]
-        for ch in line:
-            if ch in "[{(": depth += 1
-            if ch in "]})": depth -= 1
-            if ch == "," and depth == 0:
-                parts.append(cur); cur=""
-            else:
-                cur += ch
-        if cur: parts.append(cur)
-        return parts
-
-    if "," in raw and "=" in raw:
-        # multiple 'name = value' pieces
-        vals = {}
-        for piece in _split_assignments(raw):
-            if "=" not in piece: continue
-            k, v = piece.split("=", 1)
-            try:
-                vals[k.strip()] = ast.literal_eval(v.strip())
-            except Exception:
-                vals[k.strip()] = v.strip()
-        sol = Solution()
-        meth = next((m for m in dir(sol) if not m.startswith("_")), None)
-        func = getattr(sol, meth) if meth else None
-        if func:
-            sig = inspect.signature(func)
-            if all(p in vals for p in sig.parameters):
-                res = func(**{p: vals[p] for p in sig.parameters})
-            else:
-                res = func(*vals.values())
-            print(res)
-    else:
-        rhs = raw.split("=", 1)[-1] if "=" in raw and not raw.lstrip().startswith(("{", "[")) else raw
-        try: arg = ast.literal_eval(rhs.strip())
-        except Exception: arg = rhs.strip()
-        sol = Solution()
-        meth = next((m for m in dir(sol) if not m.startswith("_")), None)
-        res = getattr(sol, meth)(arg) if meth else ""
-        print(res)
-""")
-    return tmp
+GRAPHQL_URL = "https://leetcode.com/graphql"
+# ---------------------------------------------------------------------------
 
 
-CPP_HEADER = "#include <bits/stdc++.h>\nusing namespace std;\n\n"
+def _markdown_from_html(html_src: str) -> str:
+    """Convert the HTML statement to reasonably clean Markdown."""
+    h2t = html2text.HTML2Text()
+    h2t.ignore_links = False
+    h2t.body_width = 0
+    md = h2t.handle(html_src)
+    # the GraphQL response encodes “&lt;” etc. once more → unescape
+    return html.unescape(md).strip()
 
-def _wrap_cpp(src: Path) -> Path:
+
+def fetch_problem(title_slug: str) -> Dict:
     """
-    • Copies user code with <bits/stdc++.h> header.
-    • If user already defines main(), do nothing else.
-    • Otherwise append driver that:
-          - reads stdin blob,
-          - calls Solution::<LEE_METHOD|solve>(string),
-          - prints its return value.
+    Return structured problem data.  Raises RuntimeError on network / API issues.
     """
-    user_code = src.read_text(encoding="utf-8")
-    has_main  = bool(re.search(r"\bint\s+main\s*\(", user_code))
-
-    tmp = Path(tempfile.mkdtemp(prefix="lcx_cppwrap_")) / src.name
-    with tmp.open("w", encoding="utf-8") as out, src.open("r", encoding="utf-8") as user:
-        out.write(CPP_HEADER)
-        shutil.copyfileobj(user, out)
-
-        if not has_main:
-            out.write(r"""
-#ifndef LEE_METHOD
-#define LEE_METHOD solve
-#endif
-int main(){
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
-
-    /* read stdin blob */
-    std::string raw,line; while(std::getline(std::cin,line)) raw+=line+'\n';
-
-    Solution sol;
-
-    /* try call with std::string first */
-    if constexpr (std::is_invocable_v<decltype(&Solution::LEE_METHOD),
-                                      Solution,std::string const&>)
-    {
-        std::cout << sol.LEE_METHOD(raw) << '\n';
-        return 0;
+    query = """
+    query getQuestion($titleSlug: String!) {
+      question(titleSlug: $titleSlug) {
+        title
+        content          # HTML body
+        sampleTestCase   # fallback inputs
+      }
     }
+    """
+    resp = requests.post(GRAPHQL_URL,
+                         json={"query": query, "variables": {"titleSlug": title_slug}},
+                         timeout=10)
+    resp.raise_for_status()
 
-    /* fallback: attempt to parse standard two-line LeetCode sample */
-    std::istringstream ss(raw);
-    int n; if(!(ss>>n)){ return 0; }
-    std::string dump; std::getline(ss,dump); std::string json; std::getline(ss,json);
+    data = resp.json()
+    q = data.get("data", {}).get("question")
+    if not q:
+        raise RuntimeError(f"Problem '{title_slug}' not found or API error.")
 
-    std::vector<std::vector<int>> v; std::vector<int> cur;
-    int num=-1; bool in=false;
-    for(char c:json){
-        if(std::isdigit(c)){ if(num==-1) num=0; num=num*10+(c-'0'); in=true; }
-        else if(in){ cur.push_back(num); num=-1; in=false;
-                     if(cur.size()==2){ v.push_back(cur); cur.clear(); } }
-    }
-    if(!cur.empty()) v.push_back(cur);
+    title, content_html = q["title"], q["content"] or ""
+    md_body = _markdown_from_html(content_html)
 
-    std::cout << sol.LEE_METHOD(n,v) << '\n';
-    return 0;
-}
-""")
-    return tmp
+    # -- scrape explicit Input/Output blocks ------------------------------
+    examples: list[Tuple[str, str | None]] = []
+    soup = BeautifulSoup(content_html, "html.parser")
 
-def _norm(s: str):
-    """Return a comparison‑ready value (object or condensed string)."""
-    try:
-        return ast.literal_eval(s.strip())
-    except Exception:
-        return re.sub(r"\s+", "", s.strip())
+    for pre in soup.find_all("pre"):
+        block = pre.get_text(separator="\n")
+        if "Input:" in block and "Output:" in block:
+            inp = block.split("Input:", 1)[1].split("Output:", 1)[0].strip().rstrip(".")
+            out = block.split("Output:", 1)[1].split("Explanation:", 1)[0].strip().rstrip(".")
+            examples.append((inp, out))
 
+    # Fallback – one big sampleTestCase string (inputs only)
+    if not examples and q.get("sampleTestCase"):
+        raw_cases = [c.strip() for c in q["sampleTestCase"].strip().split("\n\n") if c.strip()]
+        examples = [(c, None) for c in raw_cases]
 
-def _diff(a: str, b: str) -> List[str]:
-    return list(difflib.unified_diff(a.splitlines(), b.splitlines(),
-                                     fromfile="expected", tofile="actual",
-                                     lineterm=""))
-
-diff_outputs = _diff
+    return dict(title=title,
+                slug=title_slug,
+                html=content_html,
+                markdown=md_body,
+                examples=examples)
 
 
-# main runner #
+# ---------------------------------------------------------------------------
 
-def run_tests(
-    file_path: str | Path,
-    test_cases: List[Tuple[str, str | None]],
-    *, use_docker: bool | None = None,
-    timeout: int = 2, memory: int = 256
-):
-    file_path = Path(file_path).resolve()
-    cfg_all = yaml.safe_load(Path(__file__).with_name("languages.yaml").read_text())
-    ext = file_path.suffix.lower()
-    lang, cfg = next(((n, c) for n, c in cfg_all.items()
-                      if ext in (e.lower() for e in c["extensions"])), (None, None))
-    if cfg is None:
-        raise RuntimeError(f"Unsupported extension '{ext}'")
 
-    # needs_compile = bool(cfg.get("compile"))
-    # if use_docker is None:
-    #     has_comp = importlib.util.find_spec(cfg["compile"][0]) is not None if needs_compile else False
-    #     use_docker = needs_compile and not has_comp and sandbox.is_docker_available()
+def save_problem(problem: Dict) -> None:
+    """
+    Persist statement + examples under .leetcodex/<slug>/
+    """
+    slug = problem["slug"]
+    dir_path = Path(".leetcodex") / slug
+    dir_path.mkdir(parents=True, exist_ok=True)
 
-    needs_compile = bool(cfg.get("compile"))
-    if use_docker is None:
-        # Try local compiler first
-        if needs_compile:
-            compiler = cfg["compile"][0]
-            has_local = shutil.which(compiler) is not None
-            use_docker = not has_local
-        else:
-            use_docker = False
+    # 1. write statement
+    (dir_path / "problem.md").write_text(f"# {problem['title']}\n\n{problem['markdown']}\n",
+                                         encoding="utf-8")
 
-    # Skip pull if image already present
-    if use_docker and image:
-        if subprocess.run(["docker", "inspect", "--type=image", image],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL).returncode != 0:
-            sandbox.pull_image(image)
-    
-    
-    run_path = file_path
-    if lang == "python":
-        _ensure_stub_package()
-        run_path = _wrap_python(file_path)
-        needs_compile = False
-    elif lang == "cpp":
-        run_path = _wrap_cpp(file_path)
+    # 2. write each sample
+    for idx, (inp, out) in enumerate(problem["examples"], 1):
+        (dir_path / f"input_{idx}.txt").write_text(inp.strip() + "\n", encoding="utf-8")
+        if out is not None:
+            (dir_path / f"output_{idx}.txt").write_text(out.strip() + "\n", encoding="utf-8")
 
-    image = cfg.get("docker_image")
-    if use_docker and image:
-        sandbox.pull_image(image)
 
-    if needs_compile:
-        tpl = cfg["docker_compile"] if use_docker and image else cfg["compile"]
-        cmd = [a.format(file=str(run_path),
-                        file_base=str(run_path.with_suffix("")),
-                        file_name=run_path.name,
-                        class_name="") for a in tpl]
-        proc = (sandbox.run_in_docker(image, str(run_path.parent), cmd,
-                                      timeout=None, memory_limit=memory)
-                if use_docker and image else
-                sandbox.run_subprocess(cmd, timeout=None))
-        if proc.returncode:
-            return (proc.stderr or "") + (proc.stdout or ""), []
+def load_cached_examples(slug: str) -> List[Tuple[str, str | None]] | None:
+    """Return cached examples if present (legacy helper for CLI)."""
+    dir_path = Path(".leetcodex") / slug
+    if not dir_path.is_dir():
+        return None
+    inputs = sorted(dir_path.glob("input_*.txt"), key=lambda p: int(p.stem.split("_")[1]))
+    outputs = sorted(dir_path.glob("output_*.txt"), key=lambda p: int(p.stem.split("_")[1]))
 
-    run_tpl = cfg["docker_run"] if use_docker and image else cfg["run"]
-    results = []
-    for raw_inp, expected in test_cases:
-        cmd = [a.format(file=str(run_path),
-                        file_base=str(run_path.with_suffix("")),
-                        file_name=run_path.name,
-                        class_name="") for a in run_tpl]
-        proc = (sandbox.run_in_docker(image, str(run_path.parent), cmd,
-                                      input_data=(raw_inp + "\n") if raw_inp else None,
-                                      timeout=timeout, memory_limit=memory)
-                if use_docker and image else
-                sandbox.run_subprocess(cmd,
-                                       input_data=(raw_inp + "\n") if raw_inp else None,
-                                       timeout=timeout, memory_limit=memory))
-        full_out = (proc.stdout or "").rstrip("\n")
-        stderr   = (proc.stderr or "").strip()
-        answer   = full_out.splitlines()[-1].strip() if full_out else ""
-        passed = expected is None or (_norm(answer) == _norm(expected))
-        results.append(dict(input=raw_inp, expected=expected, output=full_out,
-                            answer=answer, error=stderr or None, passed=passed))
-    return None, results
+    ex: list[tuple[str, str | None]] = []
+    for inp_path in inputs:
+        idx = inp_path.stem.split("_")[1]
+        inp = inp_path.read_text(encoding="utf-8").strip()
+        out_path = dir_path / f"output_{idx}.txt"
+        ex.append((inp, out_path.read_text(encoding="utf-8").strip() if out_path.exists() else None))
+    return ex
